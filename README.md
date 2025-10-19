@@ -10,6 +10,8 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=for-the-badge)](LICENSE)
 [![Open Source Love](https://img.shields.io/badge/Open%20Source-%E2%9D%A4-yellow?style=for-the-badge)](https://github.com/TheBagelProject)
 
+![Bagel](image.png)
+
 [Features](#-key-features) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Support](#-support)
 
 </div>
