@@ -1,0 +1,97 @@
+services:
+  mongo-bagel:
+    image: mongo:noble
+    container_name: mongo-bagel
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - bagel-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  bagel-backend:
+    image: thebagelproject/bagel-backend:latest
+    container_name: bagel-backend
+    restart: unless-stopped
+    user: root  # Added to fix Docker socket access
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGO_URI=mongodb://mongo-bagel:27017/BagelDB
+      - DOCKER_IMAGE_NAME=thebagelproject/bagel-server:latest
+#      - SESSION_COOKIE_SECRET=
+#      - JWT_SECRET=
+#      - PAT_ENCRYPTION_KEY=
+    depends_on:
+      mongo-bagel:
+        condition: service_healthy
+    networks:
+      - bagel-network
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw  # Added :rw for read-write access
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  bagel-ui:
+    image: thebagelproject/bagel-ui:latest
+    container_name: bagel-ui
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - BACKEND_URL=http://bagel-backend:5000
+    depends_on:
+      - bagel-backend
+    networks:
+      - bagel-network
+
+  bagel-server:
+    image: thebagelproject/bagel-server:latest
+    container_name: bagel-server
+    restart: unless-stopped
+    stdin_open: true  # Keep container running
+    tty: true         # Keep container running
+    command: tail -f /dev/null  # Keep container alive for docker exec
+    depends_on:
+      - mongo-bagel
+    networks:
+      - bagel-network
+    volumes:
+      - bagel_workspace:/workspace  # Persistent workspace for projects
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket access (if needed)
+    environment:
+      - AWS_REGION=us-east-1
+      - TF_IN_AUTOMATION=true
+      - FORCE_COLOR=0
+    working_dir: /workspace
+    healthcheck:
+      test: ["CMD", "which", "terraform", "&&", "which", "aws", "&&", "which", "git", "&&", "which", "node"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  mongo_data:
+    driver: local
+  bagel_workspace:
+    driver: local
+
+networks:
+  bagel-network:
+    driver: bridge
