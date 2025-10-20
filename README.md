@@ -68,7 +68,7 @@ Complete audit trail of all deployments with detailed logs and status tracking.
 <td width="50%">
 
 ### 🎨 **Developer-First UI**
-Clean, intuitive interface built with Next.js and React - designed for developers by developers.
+Clean, intuitive interface built with Next.js - designed for developers by developers.
 
 ### ⚡ **Minimal Dependencies**
 Get started quickly without complex setup. Just Docker, and you're ready to go.
@@ -138,7 +138,7 @@ Bagel consists of four main components running as Docker containers:
 
 ### Components
 
-- **🎨 bagel-ui**: Modern React/Next.js frontend with TypeScript
+- **🎨 bagel-ui**: Modern Next.js frontend with TypeScript
 - **⚙️ bagel-backend**: Express.js API server with MongoDB integration
 - **🛠️ bagel-server**: Terraform execution environment with AWS CLI
 - **💾 mongo-bagel**: MongoDB database for storing configurations and state
@@ -253,7 +253,7 @@ Bagel is released under the [AGPL 3.0 License](LICENSE).
 
 Built with ❤️ using:
 - [Terraform](https://www.terraform.io/) - Infrastructure as Code
-- [Next.js](https://nextjs.org/) - React Framework
+- [Next.js](https://nextjs.org/) - Nextjs Framework
 - [Express.js](https://expressjs.com/) - Backend Framework
 - [MongoDB](https://www.mongodb.com/) - Database
 - [Docker](https://www.docker.com/) - Containerization
