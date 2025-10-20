@@ -379,3 +379,41 @@ export const terraformDestroy = async (req: Request, res: Response) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+/**
+ * POST /projects/:projectId/terraform/plan/cancel
+ * Marks the 'plan' step for a deployment as cancelled
+ */
+export const terraformPlanDeny = async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { deploymentId } = req.body;
+
+    if (!deploymentId) return res.status(400).json({ error: 'deploymentId is required' });
+
+    // Ensure project exists
+    const project = await Project.findOne({ projectId });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Update existing 'plan' step's status to 'cancelled'
+    const updateResult = await Deployment.updateOne(
+      { deploymentId, 'steps.step': 'plan' },
+      {
+        $set: {
+          'steps.$.stepStatus': 'cancelled',
+          'steps.$.timestamp': new Date(),
+        },
+      }
+    );
+
+    if (updateResult.matchedCount === 0) {
+      // No existing plan step found
+      return res.status(404).json({ error: 'Plan step not found for deployment' });
+    }
+
+    res.json({ success: true, message: 'Plan Step Cancelled by User', deploymentId });
+  } catch (err: any) {
+    console.error('Terraform plan cancel error:', err);
+    res.status(500).json({ error: err.message });
+  }
+};

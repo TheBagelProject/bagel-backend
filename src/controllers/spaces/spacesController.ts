@@ -39,7 +39,7 @@ export const getSpacesByProjectId = async (req: Request, res: Response) => {
     // Get deployment info for each space
     const spacesWithStatus = await Promise.all(
       spaces.map(async (space) => {
-        const lastDeployment = await Deployment.findOne({ spaceId: space.spaceId })
+        const lastDeployment = await Deployment.findOne({ spaceId: space.spaceName })
           .sort({ finishedAt: -1, startedAt: -1 })
           .select('finishedAt startedAt')
           .limit(1);

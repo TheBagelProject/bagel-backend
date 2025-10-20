@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { terraformInit, terraformPlan, terraformApply, terraformDestroy } from "../controllers/terrafrom/terraformInjector";
+import { terraformInit, terraformPlan, terraformApply, terraformDestroy, terraformPlanDeny } from "../controllers/terrafrom/terraformInjector";
 import { getDeploymentSummary } from "../controllers/deployment/deploymentController";
 import { authenticateToken } from "../middleware/tokenManagement";
 
@@ -24,6 +24,13 @@ router.post(
   "/:projectId/plan",
   authenticateToken,
   terraformPlan
+);
+
+// Cancel plan (mark step as cancelled)
+router.post(
+  "/:projectId/plan/cancel",
+  authenticateToken,
+  terraformPlanDeny
 );
 
 // Run terraform apply --auto-approve
