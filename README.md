@@ -2,7 +2,7 @@
 
 # 🥯 Bagel
 
-### Open-Source Self-Service Terraform Platform
+### Open-Source Self-Service Terraform Platform 
 
 **The easiest way for developers to manage Terraform infrastructure with confidence**
 
