@@ -28,9 +28,8 @@ services:
       - PORT=5000
       - MONGO_URI=mongodb://mongo-bagel:27017/BagelDB
       - DOCKER_IMAGE_NAME=thebagelproject/bagel-server:latest
-      - SESSION_COOKIE_SECRET=the-super-session-cookie-secret
-      - JWT_SECRET=the-super-session-jwt-secret
-      - PAT_ENCRYPTION_KEY=the-super-pat-encryption-key
+      - JWT_SECRET=the_bagel_baker_whispered_to_the_dough_rise_slow_and_code_faster@350F_with_extra_yeast!
+      - PAT_ENCRYPTION_KEY=buttered_bagels_never_fail#in_dev_mode!
     depends_on:
       mongo-bagel:
         condition: service_healthy
