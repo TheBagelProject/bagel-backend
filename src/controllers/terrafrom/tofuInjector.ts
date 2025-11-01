@@ -1,4 +1,4 @@
-// controllers/Docker/terraformInjector.ts
+// controllers/Docker/tofuInjector.ts
 import { Request, Response } from "express";
 import { spawn, execSync } from "child_process";
 import Project from "../../models/project.schema";
@@ -12,6 +12,7 @@ type CommandResult = {
   stdout: string;
   stderr: string;
   combined?: string;
+  logFileContent?: string;
   summary: {
     toAdd?: number;
     toChange?: number;
@@ -23,9 +24,9 @@ type CommandResult = {
 };
 
 /**
- * Parse Terraform output into structured summary (init, apply, destroy only)
+ * Parse OpenTofu output into structured summary (init, apply, destroy only)
  */
-const parseTerraformSummary = (stdout: string): CommandResult["summary"] => {
+const parseTofuSummary = (stdout: string): CommandResult["summary"] => {
   let summary: CommandResult["summary"] | null = null;
   const lines = stdout.split("\n");
 
@@ -69,20 +70,71 @@ const parseTerraformSummary = (stdout: string): CommandResult["summary"] => {
 };
 
 /**
+ * Parse plan summary from human-readable text output
+ */
+const parsePlanSummaryFromText = (planText: string) => {
+  const summary: any = {};
+  
+  // Extract plan statistics
+  const planMatch = planText.match(/Plan:\s+(\d+)\s+to add,\s+(\d+)\s+to change,\s+(\d+)\s+to destroy/);
+  if (planMatch) {
+    summary.changes = {
+      add: parseInt(planMatch[1], 10),
+      change: parseInt(planMatch[2], 10),
+      destroy: parseInt(planMatch[3], 10)
+    };
+  }
+  
+  // Extract resource changes
+  const resourceChanges = [];
+  const lines = planText.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Look for resource change indicators
+    if (line.match(/^[+~-]\s+resource\s+/)) {
+      const action = line.startsWith('+') ? 'create' : 
+                    line.startsWith('~') ? 'update' : 'delete';
+      const resourceMatch = line.match(/resource\s+"([^"]+)"\s+"([^"]+)"/);
+      if (resourceMatch) {
+        resourceChanges.push({
+          action,
+          type: resourceMatch[1],
+          name: resourceMatch[2]
+        });
+      }
+    }
+  }
+  
+  if (resourceChanges.length > 0) {
+    summary.resource_changes = resourceChanges;
+  }
+  
+  // Check for no changes
+  if (planText.includes('No changes')) {
+    summary.no_changes = true;
+  }
+  
+  return summary;
+};
+
+/**
  * Utility: run commands inside a container workspace and collect output
  */
 const runCommands = (
   containerId: string,
   workspacePath: string,
-  commands: string[]
+  commands: string[],
+  enableLogging: boolean = true
 ): Promise<CommandResult> => {
   return new Promise((resolve, reject) => {
     const safePath = workspacePath.replace(/(["\s'$`\\])/g, "\\$1");
+    
     const fullCmd = commands.join(" && ");
     // Redirect stderr to stdout to preserve output order as seen in the terminal
     const wrappedCmd = `cd ${safePath} && ${fullCmd} 2>&1`;
 
-    const proc = spawn("docker", [
+    const dockerArgs = [
       "exec",
       "-i",
       "-e",
@@ -93,13 +145,25 @@ const runCommands = (
       "bash",
       "-c",
       wrappedCmd,
-    ]);
+    ];
+
+    // Only add logging if explicitly enabled and path doesn't have problematic characters
+    let logFilePath = "";
+    if (enableLogging && !workspacePath.includes(" ")) {
+      const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
+      const logFileName = `tofu_${timestamp}.log`;
+      logFilePath = `${workspacePath}/${logFileName}`;
+      
+      dockerArgs.splice(-3, 0, "-e", "TF_LOG=INFO", "-e", `TF_LOG_PATH=${logFilePath}`);
+    }
+
+    const proc = spawn("docker", dockerArgs);
 
     proc.stdout.setEncoding("utf8");
     proc.stderr.setEncoding("utf8");
 
-  let stdoutBuffer = "";
-  let stderrBuffer = "";
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
 
     proc.stdout.on("data", (data) => {
       stdoutBuffer += data.toString();
@@ -109,15 +173,57 @@ const runCommands = (
       stderrBuffer += data.toString();
     });
 
-    proc.on("close", (code) => {
-      // Combine buffers to avoid losing logs that Terraform prints to stderr
+    proc.on("close", async (code) => {
+      // Combine buffers to avoid losing logs that OpenTofu prints to stderr
       const combined = `${stdoutBuffer}${stderrBuffer}`;
+      
+      // Try to read the log file content only if logging was enabled
+      let logFileContent = "";
+      if (enableLogging && logFilePath) {
+        try {
+          const escapedLogPath = logFilePath.replace(/(["\s'$`\\])/g, "\\$1");
+          const logReadProc = spawn("docker", [
+            "exec",
+            "-i",
+            containerId,
+            "cat",
+            escapedLogPath,
+          ]);
+
+          let logBuffer = "";
+          logReadProc.stdout.setEncoding("utf8");
+          logReadProc.stdout.on("data", (data) => {
+            logBuffer += data.toString();
+          });
+
+          // Add timeout to prevent hanging
+          const timeoutId = setTimeout(() => {
+            logReadProc.kill();
+          }, 3000); // 3 second timeout
+
+          await new Promise<void>((resolveLog) => {
+            logReadProc.on("close", () => {
+              clearTimeout(timeoutId);
+              logFileContent = logBuffer;
+              resolveLog();
+            });
+            logReadProc.on("error", () => {
+              clearTimeout(timeoutId);
+              resolveLog();
+            });
+          });
+        } catch (err) {
+          console.warn("Could not read OpenTofu log file:", err);
+        }
+      }
+
       resolve({
         exitCode: code,
         stdout: stdoutBuffer,
         stderr: stderrBuffer,
         combined,
-        summary: parseTerraformSummary(stdoutBuffer),
+        logFileContent,
+        summary: parseTofuSummary(stdoutBuffer),
       });
     });
 
@@ -128,12 +234,12 @@ const runCommands = (
 };
 
 /**
- * POST /projects/:projectId/terraform/init
+ * POST /projects/:projectId/tofu/init
  * Creates a new DeploymentLog document
  */
 
 
-export const terraformInit = async (req: Request, res: Response) => {
+export const tofuInit = async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
     const { spaceName, deploymentId } = req.body;
@@ -159,8 +265,8 @@ export const terraformInit = async (req: Request, res: Response) => {
 
     const workspacePath = `/workspace/${project.projectName}/${spaceName}`;
     const result = await runCommands(containerId, workspacePath, [
-      "terraform init -input=false -no-color",
-    ]);
+      "tofu init -input=false -no-color",
+    ], false); // Disable logging for now to improve performance
 
     let finalDeploymentId = deploymentId;
     let deploymentName = "";
@@ -185,6 +291,7 @@ export const terraformInit = async (req: Request, res: Response) => {
               step: "init",
               stepStatus: result.exitCode === 0 ? "successful" : "failed",
               message: result.combined || result.stdout || result.stderr,
+              logFileContent: result.logFileContent,
             },
           },
         }
@@ -207,6 +314,7 @@ export const terraformInit = async (req: Request, res: Response) => {
             step: "init",
             stepStatus: result.exitCode === 0 ? "successful" : "failed",
             message: result.combined || result.stdout || result.stderr,
+            logFileContent: result.logFileContent,
           },
         ],
         startedAt: new Date(),
@@ -214,22 +322,23 @@ export const terraformInit = async (req: Request, res: Response) => {
     }
 
     res.json({
-      command: "terraform init",
+      command: "tofu init",
       deploymentId: finalDeploymentId,
       deploymentName,
+      logFileContent: result.logFileContent,
       ...result,
     });
   } catch (err: any) {
-    console.error("Terraform init error:", err);
+    console.error("OpenTofu init error:", err);
     res.status(500).json({ error: err.message });
   }
 };
 
 /**
- * POST /projects/:projectId/terraform/plan
+ * POST /projects/:projectId/tofu/plan
  * Appends a "plan" step log to an existing deployment
  */
-export const terraformPlan = async (req: Request, res: Response) => {
+export const tofuPlan = async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
     const { spaceName, deploymentId } = req.body;
@@ -253,48 +362,41 @@ export const terraformPlan = async (req: Request, res: Response) => {
     const workspacePath = `/workspace/${project.projectName}/${spaceName}`;
 
     const humanReadablePlan = await runCommands(containerId, workspacePath, [
-      "terraform plan -input=false -no-color",
-    ]);
+      "tofu plan -input=false -no-color",
+    ], false); // Disable logging for performance
 
-    const structuredPlan = await runCommands(containerId, workspacePath, [
-      "terraform plan -input=false -no-color -out=tfplan",
-      "terraform show -json tfplan",
-    ]);
-
-    let planJson: any = null;
-    try {
-      planJson = JSON.parse(structuredPlan.stdout);
-    } catch (e) {
-      console.error("Failed to parse terraform show -json:", e);
-    }
-
-    // Append plan step with structuredData
+    // Append plan step with human-readable output only
     await DeploymentRepository.addDeploymentStep({
       deploymentId,
       step: "plan",
       stepStatus: humanReadablePlan.exitCode === 0 ? "successful" : "failed",
-  message: humanReadablePlan.combined || humanReadablePlan.stdout || humanReadablePlan.stderr,
-      structuredData: planJson,
+      message: humanReadablePlan.combined || humanReadablePlan.stdout || humanReadablePlan.stderr,
+      logFileContent: humanReadablePlan.logFileContent,
     });
 
     res.json({
       stepName: "Plan",
-      rawFormat: humanReadablePlan.stdout,
-      data: planJson,
+      humanReadable: {
+        raw: humanReadablePlan.stdout,
+        summary: parseTofuSummary(humanReadablePlan.stdout)
+      },
       exitCode: humanReadablePlan.exitCode,
       stderr: humanReadablePlan.stderr,
+      logFileContent: humanReadablePlan.logFileContent,
+      // Legacy fields for backward compatibility
+      rawFormat: humanReadablePlan.stdout,
     });
   } catch (err: any) {
-    console.error("Terraform plan error:", err);
+    console.error("OpenTofu plan error:", err);
     res.status(500).json({ error: err.message });
   }
 };
 
 /**
- * POST /projects/:projectId/terraform/apply
+ * POST /projects/:projectId/tofu/apply
  * Appends an "apply" step log
  */
-export const terraformApply = async (req: Request, res: Response) => {
+export const tofuApply = async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
     const { spaceName, deploymentId } = req.body;
@@ -318,28 +420,34 @@ export const terraformApply = async (req: Request, res: Response) => {
     const workspacePath = `/workspace/${project.projectName}/${spaceName}`;
 
     const result = await runCommands(containerId, workspacePath, [
-      "terraform apply -auto-approve -input=false -no-color",
-    ]);
+      "tofu apply -auto-approve -input=false -no-color",
+    ], false); // Disable logging for performance
 
     await DeploymentRepository.addDeploymentStep({
       deploymentId,
       step: "apply",
       stepStatus: result.exitCode === 0 ? "successful" : "failed",
       message: result.stdout || result.stderr,
+      logFileContent: result.logFileContent,
     });
 
-  res.json({ command: "terraform apply", deploymentId, ...result });
+  res.json({ 
+    command: "tofu apply", 
+    deploymentId, 
+    logFileContent: result.logFileContent,
+    ...result 
+  });
   } catch (err: any) {
-    console.error("Terraform apply error:", err);
+    console.error("OpenTofu apply error:", err);
     res.status(500).json({ error: err.message });
   }
 };
 
 /**
- * POST /projects/:projectId/terraform/destroy
+ * POST /projects/:projectId/tofu/destroy
  * Appends a "destroy" step log
  */
-export const terraformDestroy = async (req: Request, res: Response) => {
+export const tofuDestroy = async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
     const { spaceName, deploymentId } = req.body;
@@ -363,28 +471,34 @@ export const terraformDestroy = async (req: Request, res: Response) => {
     const workspacePath = `/workspace/${project.projectName}/${spaceName}`;
 
     const result = await runCommands(containerId, workspacePath, [
-      "terraform destroy -auto-approve -input=false -no-color",
-    ]);
+      "tofu destroy -auto-approve -input=false -no-color",
+    ], false); // Disable logging for performance
 
     await DeploymentRepository.addDeploymentStep({
       deploymentId,
       step: "destroy",
       stepStatus: result.exitCode === 0 ? "successful" : "failed",
       message: result.combined || result.stdout || result.stderr,
+      logFileContent: result.logFileContent,
     });
 
-  res.json({ command: "terraform destroy", deploymentId, ...result });
+  res.json({ 
+    command: "tofu destroy", 
+    deploymentId, 
+    logFileContent: result.logFileContent,
+    ...result 
+  });
   } catch (err: any) {
-    console.error("Terraform destroy error:", err);
+    console.error("OpenTofu destroy error:", err);
     res.status(500).json({ error: err.message });
   }
 };
 
 /**
- * POST /projects/:projectId/terraform/plan/cancel
+ * POST /projects/:projectId/tofu/plan/cancel
  * Marks the 'plan' step for a deployment as cancelled
  */
-export const terraformPlanDeny = async (req: Request, res: Response) => {
+export const tofuPlanDeny = async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
     const { deploymentId } = req.body;
@@ -413,7 +527,7 @@ export const terraformPlanDeny = async (req: Request, res: Response) => {
 
     res.json({ success: true, message: 'Plan Step Cancelled by User', deploymentId });
   } catch (err: any) {
-    console.error('Terraform plan cancel error:', err);
+    console.error('OpenTofu plan cancel error:', err);
     res.status(500).json({ error: err.message });
   }
 };

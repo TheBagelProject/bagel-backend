@@ -14,7 +14,7 @@ import userRoutes from "./routes/userRoutes";
 import githubPatRoutes from "./routes/githubPatRoutes";
 // import dockerRoutes from "./routes/dockerRoutes";
 import projectRoutes from "./routes/projectRoutes"
-import terrafromRoutes from "./routes/terrafromRoutes"
+import tofuRoutes from "./routes/tofuRoutes"
 import deploymentRoutes from "./routes/deploymentRoutes"
 
 const MONGO_URI = process.env.MONGO_URI;
@@ -44,7 +44,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/github-pat", githubPatRoutes);
 // app.use("/api/docker", dockerRoutes);
 app.use("/api/project", projectRoutes);
-app.use("/api/terraform", terrafromRoutes);
+app.use("/api/tofu", tofuRoutes);
 app.use("/api/deployment", deploymentRoutes); 
 
 // Connect to MongoDB and start server

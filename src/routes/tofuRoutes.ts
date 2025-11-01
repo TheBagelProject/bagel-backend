@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { terraformInit, terraformPlan, terraformApply, terraformDestroy, terraformPlanDeny } from "../controllers/terrafrom/terraformInjector";
+import { tofuInit, tofuPlan, tofuApply, tofuDestroy, tofuPlanDeny } from "../controllers/terrafrom/tofuInjector";
 import { getDeploymentSummary } from "../controllers/deployment/deploymentController";
 import { authenticateToken } from "../middleware/tokenManagement";
 
@@ -12,39 +12,39 @@ router.get(
   getDeploymentSummary
 );
 
-// Run terraform init only
+// Run tofu init only
 router.post(
   "/:projectId/init",
   authenticateToken,
-  terraformInit
+  tofuInit
 );
 
-// Run terraform plan only
+// Run tofu plan only
 router.post(
   "/:projectId/plan",
   authenticateToken,
-  terraformPlan
+  tofuPlan
 );
 
 // Cancel plan (mark step as cancelled)
 router.post(
   "/:projectId/plan/cancel",
   authenticateToken,
-  terraformPlanDeny
+  tofuPlanDeny
 );
 
-// Run terraform apply --auto-approve
+// Run tofu apply --auto-approve
 router.post(
   "/:projectId/apply",
   authenticateToken,
-  terraformApply
+  tofuApply
 );
 
-// Run terraform destroy --auto-approve
+// Run tofu destroy --auto-approve
 router.post(
   "/:projectId/destroy",
   authenticateToken,
-  terraformDestroy
+  tofuDestroy
 );
 
 export default router;

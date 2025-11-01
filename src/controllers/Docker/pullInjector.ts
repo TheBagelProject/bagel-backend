@@ -89,9 +89,23 @@ export const resetRepoAndSyncSpaces = async (req: Request, res: Response) => {
     project.spaces = [...keptSpaces, ...newSpaces];
     await project.save();
 
+    // Create operation log
+    const operationLog = [
+      `Project: ${project.projectName}`,
+      `Repository URL: ${project.repoUrl}`,
+      `Container ID: ${containerId}`,
+      `Workspace Path: ${workspacePath}`,
+      `Git reset executed: origin/main`,
+      `Folders found: ${folderNames.length > 0 ? folderNames.join(', ') : 'none'}`,
+      `Spaces synced: ${project.spaces.length} total`,
+      `New spaces added: ${newSpaces.length}`,
+      `Removed spaces: ${existingSpaces.filter((s) => !folderNames.includes(s.spaceName)).length}`
+    ];
+
     res.json({
       success: true,
-      message: `Repo reset to origin/main and spaces synced`,
+      message: `Repo has been cloned successfully and spaces synced`,
+      log: operationLog,
       spaces: project.spaces,
       added: newSpaces.map((s) => s.spaceName),
       removed: existingSpaces

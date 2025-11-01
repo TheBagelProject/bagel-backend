@@ -31,7 +31,7 @@ export const createDeployment = async ({
 
 
 
-export const addDeploymentStep = async ({ deploymentId, step, stepStatus, message, structuredData }: any) => {
+export const addDeploymentStep = async ({ deploymentId, step, stepStatus, message, structuredData, logFileContent }: any) => {
   // Remove any previous step for this type, then push the new one
   await Deployment.updateOne(
     { deploymentId },
@@ -41,7 +41,14 @@ export const addDeploymentStep = async ({ deploymentId, step, stepStatus, messag
     { deploymentId },
     {
       $push: {
-        steps: { step, stepStatus, message, timestamp: new Date(), ...(structuredData ? { structuredData } : {}) }
+        steps: { 
+          step, 
+          stepStatus, 
+          message, 
+          timestamp: new Date(), 
+          ...(structuredData ? { structuredData } : {}),
+          ...(logFileContent ? { logFileContent } : {})
+        }
       }
     },
     { new: true }
