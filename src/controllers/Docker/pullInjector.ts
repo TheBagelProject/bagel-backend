@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { spawn, execSync } from "child_process";
 import { v4 as uuidv4 } from "uuid";
 import Project from "../../models/project.schema";
+import Deployment from "../../models/deployment.schema";
 import { getContainerIdsByImage } from "../../utils/dockerUtils";
 
 /**
@@ -12,6 +13,7 @@ import { getContainerIdsByImage } from "../../utils/dockerUtils";
 export const resetRepoAndSyncSpaces = async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
+    const { deploymentId } = req.body;
 
     const project = await Project.findOne({ projectId });
     if (!project) {
@@ -54,11 +56,46 @@ export const resetRepoAndSyncSpaces = async (req: Request, res: Response) => {
       return res.status(400).json({ error: `Workspace directory ${workspacePath} does not exist in container. Please clone the repo first.` });
     }
 
-    // Step 1: Hard reset repo
-    await runCmd(
-      `cd ${workspacePath} && git fetch origin main && git reset --hard origin/main && git clean -fd`
-    );
+    let gitResetSuccess = false;
+    let gitResetOutput = "";
+    let gitResetError = "";
 
+    // Step 1: Hard reset repo
+    try {
+      gitResetOutput = await runCmd(
+        `cd ${workspacePath} && git fetch origin main && git reset --hard origin/main && git clean -fd`
+      );
+      gitResetSuccess = true;
+    } catch (error: any) {
+      gitResetError = error.message;
+      gitResetSuccess = false;
+      // If git reset fails and deploymentId is provided, log it and return error
+      if (deploymentId) {
+        const deployment = await Deployment.findOne({ deploymentId });
+        if (deployment) {
+          await Deployment.updateOne(
+            { deploymentId },
+            { $pull: { steps: { step: "git" } } }
+          );
+          await Deployment.updateOne(
+            { deploymentId },
+            {
+              $push: {
+                steps: {
+                  step: "git",
+                  stepStatus: "failed",
+                  message: `Git reset failed: ${gitResetError}`,
+                  logFileContent: gitResetError,
+                },
+              },
+            }
+          );
+        }
+      }
+      return res.status(500).json({ error: `Git reset failed: ${gitResetError}` });
+    }
+    console.log(gitResetError,gitResetOutput);
+    
     // Step 2: List root-level folders
     const folderOutput = await runCmd(
       `cd ${workspacePath} && ls -d */ || true`
@@ -102,6 +139,34 @@ export const resetRepoAndSyncSpaces = async (req: Request, res: Response) => {
       `Removed spaces: ${existingSpaces.filter((s) => !folderNames.includes(s.spaceName)).length}`
     ];
 
+    // Store in deployment steps if deploymentId is provided
+    if (deploymentId) {
+      const deployment = await Deployment.findOne({ deploymentId });
+      if (!deployment) {
+        return res.status(404).json({ error: "Deployment not found" });
+      }
+
+      // Remove any previous git step, then push new one
+      await Deployment.updateOne(
+        { deploymentId },
+        { $pull: { steps: { step: "git" } } }
+      );
+
+      await Deployment.updateOne(
+        { deploymentId },
+        {
+          $push: {
+            steps: {
+              step: "git",
+              stepStatus: gitResetSuccess ? "successful" : "failed",
+              message: operationLog.join('\n'),
+              logFileContent: gitResetSuccess ? gitResetOutput : gitResetError,
+            },
+          },
+        }
+      );
+    }
+
     res.json({
       success: true,
       message: `Repo has been cloned successfully and spaces synced`,
@@ -111,6 +176,8 @@ export const resetRepoAndSyncSpaces = async (req: Request, res: Response) => {
       removed: existingSpaces
         .filter((s) => !folderNames.includes(s.spaceName))
         .map((s) => s.spaceName),
+      deploymentId: deploymentId || undefined,
+      stdout: gitResetOutput,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
